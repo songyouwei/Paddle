@@ -174,13 +174,16 @@ static std::string GetTypeName(const imperative::VarBase &var) {
 }
 
 // core._C.Tracer
-struct Tracer {
-  PyObject_HEAD
+struct PyTracer {
+  PyObject_HEAD imperative::Tracer tracer;
 };
-static imperative::Tracer tracer;
-static PyObject *Tracer_pynew(PyTypeObject *type, PyObject *args,
+static PyObject *PyTracer_new(PyTypeObject *type, PyObject *args,
                               PyObject *kwargs) {
   PyObject *obj = type->tp_alloc(type, 0);
+  if (obj) {
+    auto v = reinterpret_cast<PyTracer *>(obj);
+    new (&v->tracer) imperative::Tracer();
+  }
   return obj;
 }
 template <typename T>
@@ -193,7 +196,7 @@ static T ConvertPyObjectToMap(PyObject *obj) {
   }
   return result;
 }
-void Tracer_trace_op(Tracer *self, PyObject *args, PyObject *kwargs) {
+void PyTracer_trace_op(PyTracer *self, PyObject *args, PyObject *kwargs) {
   const char *type = nullptr;
   PyObject *inputs = nullptr;
   PyObject *outputs = nullptr;
@@ -215,20 +218,20 @@ void Tracer_trace_op(Tracer *self, PyObject *args, PyObject *kwargs) {
   auto attrs_map = ConvertPyObjectToMap<framework::AttributeMap>(attrs);
   {
     py::gil_scoped_release release;
-    tracer.TraceOp(type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs_map), place, stop_gradient);
+    self->tracer.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                         std::move(attrs_map), place, stop_gradient);
   }
 }
-static struct PyMethodDef Tracer_methods[] = {
-    {const_cast<char *>("trace_op"), (PyCFunction)Tracer_trace_op,
+static struct PyMethodDef PyTracer_methods[] = {
+    {const_cast<char *>("trace_op"), (PyCFunction)PyTracer_trace_op,
      METH_VARARGS | METH_KEYWORDS, nullptr},
     {nullptr}};
 static void Tracer_dealloc(imperative::Tracer *self) {
   Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
-static PyTypeObject TracerType = {
+static PyTypeObject PyTracerType = {
     PyVarObject_HEAD_INIT(nullptr, 0) "core._C.Tracer", /* tp_name */
-    sizeof(imperative::Tracer),                         /* tp_basicsize */
+    sizeof(PyTracer),                                   /* tp_basicsize */
     0,                                                  /* tp_itemsize */
     (destructor)Tracer_dealloc,                         /* tp_dealloc */
     nullptr,                                            /* tp_print */
@@ -253,7 +256,7 @@ static PyTypeObject TracerType = {
     0,                                                  /* tp_weaklistoffset */
     nullptr,                                            /* tp_iter */
     nullptr,                                            /* tp_iternext */
-    Tracer_methods,                                     /* tp_methods */
+    PyTracer_methods,                                   /* tp_methods */
     nullptr,                                            /* tp_members */
     nullptr,                                            /* tp_getset */
     nullptr,                                            /* tp_base */
@@ -263,14 +266,14 @@ static PyTypeObject TracerType = {
     0,                                                  /* tp_dictoffset */
     nullptr,                                            /* tp_init */
     nullptr,                                            /* tp_alloc */
-    Tracer_pynew,                                       /* tp_new */
+    PyTracer_new,                                       /* tp_new */
     // PyType_GenericNew,         /* tp_new */
 };
-bool Tracer_initModule(PyObject *module) {
-  if (PyType_Ready(&TracerType) < 0) return false;
-  Py_INCREF(&TracerType);
+bool PyTracer_initModule(PyObject *module) {
+  if (PyType_Ready(&PyTracerType) < 0) return false;
+  Py_INCREF(&PyTracerType);
   PyModule_AddObject(module, "Tracer",
-                     reinterpret_cast<PyObject *>(&TracerType));
+                     reinterpret_cast<PyObject *>(&PyTracerType));
   return true;
 }
 
@@ -286,7 +289,7 @@ PyObject *initModule_C() {
                                  methods.data()};
   ASSERT_TRUE(module = PyModule_Create(&m));
 #endif
-  ASSERT_TRUE(Tracer_initModule(module));
+  ASSERT_TRUE(PyTracer_initModule(module));
   return module;
 }
 
