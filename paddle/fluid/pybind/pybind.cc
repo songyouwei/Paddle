@@ -195,8 +195,8 @@ PYBIND11_MODULE(core_noavx, m) {
 
   m.def("_set_paddle_lib_path", &paddle::platform::dynload::SetPaddleLibPath);
 
-  initModule_C();
   BindImperative(&m);
+  BindPythonCModule(&m);
 
   py::class_<Tensor>(m, "Tensor", py::buffer_protocol())
       .def("__array__", [](Tensor &self) { return TensorToPyArray(self); })

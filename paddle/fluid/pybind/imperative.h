@@ -20,7 +20,7 @@ limitations under the License. */
 namespace paddle {
 namespace pybind {
 
-PyObject* initModule_C();
+void BindPythonCModule(pybind11::module* m);
 void BindImperative(pybind11::module* m);
 
 }  // namespace pybind

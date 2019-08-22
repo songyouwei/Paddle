@@ -147,6 +147,7 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
 }
 
 using PyNameVarBaseMap = std::unordered_map<std::string, py::handle>;
+using PyNameAttributeMap = std::unordered_map<std::string, py::handle>;
 
 static imperative::NameVarBaseMap ConvertToNameVarBaseMap(
     const PyNameVarBaseMap &map) {
@@ -163,6 +164,16 @@ static imperative::NameVarBaseMap ConvertToNameVarBaseMap(
   return result;
 }
 
+static framework::AttributeMap ConvertToAttributeMap(
+    const PyNameAttributeMap &map) {
+  framework::AttributeMap result;
+  for (auto &pair : map) {
+    auto it = PyObjectCast<framework::Attribute>(pair.second.ptr());
+    result[pair.first] = it;
+  }
+  return result;
+}
+
 static std::string GetTypeName(const imperative::VarBase &var) {
   if (var.Type() == framework::proto::VarType::RAW) {
     return "RAW";
@@ -173,7 +184,43 @@ static std::string GetTypeName(const imperative::VarBase &var) {
   }
 }
 
-// core._C.Tracer
+inline std::string Utils_unpackString(PyObject *obj) {
+  if (PyBytes_Check(obj)) {
+    size_t size = PyBytes_GET_SIZE(obj);
+    return std::string(PyBytes_AS_STRING(obj), size);
+  }
+  if (PyUnicode_Check(obj)) {
+#if PY_MAJOR_VERSION == 2
+    PyObject *s = PyUnicode_AsUTF8String(obj);
+    if (!s) {
+      throw std::runtime_error("error unpacking string as utf-8");
+    }
+    size_t size = PyBytes_GET_SIZE(s);
+    return std::string(PyBytes_AS_STRING(s), size);
+#else
+    Py_ssize_t size;
+    const char *data = PyUnicode_AsUTF8AndSize(obj, &size);
+    if (!data) {
+      throw std::runtime_error("error unpacking string as utf-8");
+    }
+    return std::string(data, (size_t)size);
+#endif
+  }
+  throw std::runtime_error("unpackString: expected bytes or unicode object");
+}
+
+template <typename T>
+static T ConvertPyObjectToMap(PyObject *obj) {
+  T result;
+  PyObject *key, *value;
+  Py_ssize_t pos = 0;
+  while (PyDict_Next(obj, &pos, &key, &value)) {
+    result[Utils_unpackString(key)] = value;
+  }
+  return result;
+}
+
+// _C.Tracer
 struct PyTracer {
   PyObject_HEAD imperative::Tracer tracer;
 };
@@ -186,17 +233,7 @@ static PyObject *PyTracer_new(PyTypeObject *type, PyObject *args,
   }
   return obj;
 }
-template <typename T>
-static T ConvertPyObjectToMap(PyObject *obj) {
-  T result;
-  PyObject *key, *value;
-  Py_ssize_t pos = 0;
-  while (PyDict_Next(obj, &pos, &key, &value)) {
-    result[PyString_AsString(key)] = value;
-  }
-  return result;
-}
-void PyTracer_trace_op(PyTracer *self, PyObject *args, PyObject *kwargs) {
+PyObject *PyTracer_trace(PyTracer *self, PyObject *args, PyObject *kwargs) {
   const char *type = nullptr;
   PyObject *inputs = nullptr;
   PyObject *outputs = nullptr;
@@ -204,71 +241,94 @@ void PyTracer_trace_op(PyTracer *self, PyObject *args, PyObject *kwargs) {
   PyObject *place = nullptr;
   unsigned char stop_gradient = 0;
 
-  char *accepted_kwargs[] = {"type",  "inputs",        "outputs", "attrs",
-                             "place", "stop_gradient", nullptr};
+  const char *accepted_kwargs[] = {"type",  "inputs",        "outputs", "attrs",
+                                   "place", "stop_gradient", nullptr};
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwargs, "sOOOOb", reinterpret_cast<char **>(accepted_kwargs),
-          &type, &inputs, &outputs, &attrs, &place, &stop_gradient))
-    return;
+          args, kwargs, "sOOOO|b", const_cast<char **>(accepted_kwargs), &type,
+          &inputs, &outputs, &attrs, &place, &stop_gradient))
+    Py_RETURN_NONE;
 
   auto ins_map =
       ConvertToNameVarBaseMap(ConvertPyObjectToMap<PyNameVarBaseMap>(inputs));
   auto outs_map =
       ConvertToNameVarBaseMap(ConvertPyObjectToMap<PyNameVarBaseMap>(outputs));
-  auto attrs_map = ConvertPyObjectToMap<framework::AttributeMap>(attrs);
-  {
+  auto attrs_map =
+      ConvertToAttributeMap(ConvertPyObjectToMap<PyNameAttributeMap>(attrs));
+
+  auto place_class_name = Utils_unpackString(
+      GetPythonAttribute(GetPythonAttribute(place, "__class__"), "__name__"));
+  if (place_class_name == "CPUPlace") {
     py::gil_scoped_release release;
-    self->tracer.TraceOp(type, std::move(ins_map), std::move(outs_map),
-                         std::move(attrs_map), place, stop_gradient);
+    self->tracer.TraceOp(
+        type, std::move(ins_map), std::move(outs_map), std::move(attrs_map),
+        PyObjectCast<platform::CPUPlace>(place), stop_gradient);
+  } else {
+    py::gil_scoped_release release;
+    self->tracer.TraceOp(
+        type, std::move(ins_map), std::move(outs_map), std::move(attrs_map),
+        PyObjectCast<platform::CUDAPlace>(place), stop_gradient);
   }
+  Py_RETURN_NONE;
 }
 static struct PyMethodDef PyTracer_methods[] = {
-    {const_cast<char *>("trace_op"), (PyCFunction)PyTracer_trace_op,
+    {const_cast<char *>("trace"), (PyCFunction)PyTracer_trace,
      METH_VARARGS | METH_KEYWORDS, nullptr},
-    {nullptr}};
-static void Tracer_dealloc(imperative::Tracer *self) {
+    {nullptr, nullptr, METH_NOARGS, nullptr}};
+static void Tracer_dealloc(PyTracer *self) {
   Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
-static PyTypeObject PyTracerType = {
-    PyVarObject_HEAD_INIT(nullptr, 0) "core._C.Tracer", /* tp_name */
-    sizeof(PyTracer),                                   /* tp_basicsize */
-    0,                                                  /* tp_itemsize */
-    (destructor)Tracer_dealloc,                         /* tp_dealloc */
-    nullptr,                                            /* tp_print */
-    nullptr,                                            /* tp_getattr */
-    nullptr,                                            /* tp_setattr */
-    nullptr,                                            /* tp_reserved */
-    nullptr,                                            /* tp_repr */
-    nullptr,                                            /* tp_as_number */
-    nullptr,                                            /* tp_as_sequence */
-    nullptr,                                            /* tp_as_mapping */
-    nullptr,                                            /* tp_hash  */
-    nullptr,                                            /* tp_call */
-    nullptr,                                            /* tp_str */
-    nullptr,                                            /* tp_getattro */
-    nullptr,                                            /* tp_setattro */
-    nullptr,                                            /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,           /* tp_flags */
-    "Tracer",                                           /* tp_doc */
-    nullptr,                                            /* tp_traverse */
-    nullptr,                                            /* tp_clear */
-    nullptr,                                            /* tp_richcompare */
-    0,                                                  /* tp_weaklistoffset */
-    nullptr,                                            /* tp_iter */
-    nullptr,                                            /* tp_iternext */
-    PyTracer_methods,                                   /* tp_methods */
-    nullptr,                                            /* tp_members */
-    nullptr,                                            /* tp_getset */
-    nullptr,                                            /* tp_base */
-    nullptr,                                            /* tp_dict */
-    nullptr,                                            /* tp_descr_get */
-    nullptr,                                            /* tp_descr_set */
-    0,                                                  /* tp_dictoffset */
-    nullptr,                                            /* tp_init */
-    nullptr,                                            /* tp_alloc */
-    PyTracer_new,                                       /* tp_new */
-    // PyType_GenericNew,         /* tp_new */
+PyTypeObject PyTracerType = {
+    PyVarObject_HEAD_INIT(nullptr, 0) "_C.Tracer", /* tp_name */
+    sizeof(PyTracer),                              /* tp_basicsize */
+    0,                                             /* tp_itemsize */
+    (destructor)Tracer_dealloc,                    /* tp_dealloc */
+    nullptr,                                       /* tp_print */
+    nullptr,                                       /* tp_getattr */
+    nullptr,                                       /* tp_setattr */
+    nullptr,                                       /* tp_reserved */
+    nullptr,                                       /* tp_repr */
+    nullptr,                                       /* tp_as_number */
+    nullptr,                                       /* tp_as_sequence */
+    nullptr,                                       /* tp_as_mapping */
+    nullptr,                                       /* tp_hash  */
+    nullptr,                                       /* tp_call */
+    nullptr,                                       /* tp_str */
+    nullptr,                                       /* tp_getattro */
+    nullptr,                                       /* tp_setattro */
+    nullptr,                                       /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,      /* tp_flags */
+    "PyTracer",                                    /* tp_doc */
+    nullptr,                                       /* tp_traverse */
+    nullptr,                                       /* tp_clear */
+    nullptr,                                       /* tp_richcompare */
+    0,                                             /* tp_weaklistoffset */
+    nullptr,                                       /* tp_iter */
+    nullptr,                                       /* tp_iternext */
+    PyTracer_methods,                              /* tp_methods */
+    nullptr,                                       /* tp_members */
+    nullptr,                                       /* tp_getset */
+    nullptr,                                       /* tp_base */
+    nullptr,                                       /* tp_dict */
+    nullptr,                                       /* tp_descr_get */
+    nullptr,                                       /* tp_descr_set */
+    0,                                             /* tp_dictoffset */
+    nullptr,                                       /* tp_init */
+    nullptr,                                       /* tp_alloc */
+    PyTracer_new,                                  /* tp_new */
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    0,
+#if PY_MAJOR_VERSION >= 3
+    nullptr,
+#endif
 };
+
 bool PyTracer_initModule(PyObject *module) {
   if (PyType_Ready(&PyTracerType) < 0) return false;
   Py_INCREF(&PyTracerType);
@@ -277,20 +337,33 @@ bool PyTracer_initModule(PyObject *module) {
   return true;
 }
 
-// python c module "core._C"
-PyObject *initModule_C() {
+PyObject *initPythonCModule() {
   PyObject *module;
 #define ASSERT_TRUE(cmd) \
   if (!(cmd)) return nullptr
 #if PY_MAJOR_VERSION == 2
-  ASSERT_TRUE(module = Py_InitModule("core._C", {}));
+  ASSERT_TRUE(module = Py_InitModule("_C", {}));
 #else
-  static struct PyModuleDef m = {PyModuleDef_HEAD_INIT, "core._C", nullptr, -1,
-                                 methods.data()};
+  static struct PyModuleDef m = {PyModuleDef_HEAD_INIT,
+                                 "_C",
+                                 nullptr,
+                                 -1,
+                                 {},
+                                 nullptr,
+                                 nullptr,
+                                 nullptr,
+                                 nullptr};
   ASSERT_TRUE(module = PyModule_Create(&m));
 #endif
   ASSERT_TRUE(PyTracer_initModule(module));
   return module;
+}
+
+void BindPythonCModule(py::module *m_ptr) {
+  VLOG(3) << "BindPythonCModule";
+  auto &m = *m_ptr;
+  PyObject *pythonc_module = initPythonCModule();
+  PyModule_AddObject(m.ptr(), (const char *)"_C", pythonc_module);
 }
 
 // Bind Methods
@@ -343,7 +416,7 @@ void BindImperative(py::module *m_ptr) {
   m.def("_dygraph_debug_level", []() { return imperative::GetDebugLevel(); });
 
   py::class_<imperative::VarBase, std::shared_ptr<imperative::VarBase>>(
-      m, "VarBase",
+      m, "VarBase", py::dynamic_attr(),
       R"DOC()DOC")
       .def_static("_alive_vars", &imperative::VarBase::AliveVarNames)
       .def("__init__",
@@ -366,11 +439,12 @@ void BindImperative(py::module *m_ptr) {
       .def("_run_backward",
            [](imperative::VarBase &self,
               const imperative::detail::BackwardStrategy &bckst,
-              const imperative::Tracer &tracer) {
+              const py::handle &pytracer) {
              // TODO(jiabin): when we impl more backward execution we can select
              // them
 
-             imperative::Engine *engine = tracer.GetDefaultEngine();
+             auto _pytracer = reinterpret_cast<PyTracer *>(pytracer.ptr());
+             imperative::Engine *engine = _pytracer->tracer.GetDefaultEngine();
              VLOG(3) << "Start backward";
              engine->Init(&self, bckst);
              engine->Execute();
