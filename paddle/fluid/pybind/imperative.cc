@@ -416,7 +416,7 @@ void BindImperative(py::module *m_ptr) {
   m.def("_dygraph_debug_level", []() { return imperative::GetDebugLevel(); });
 
   py::class_<imperative::VarBase, std::shared_ptr<imperative::VarBase>>(
-      m, "VarBase", py::dynamic_attr(),
+      m, "VarBase",
       R"DOC()DOC")
       .def_static("_alive_vars", &imperative::VarBase::AliveVarNames)
       .def("__init__",
