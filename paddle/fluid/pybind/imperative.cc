@@ -274,14 +274,15 @@ static struct PyMethodDef PyTracer_methods[] = {
     {const_cast<char *>("trace"), (PyCFunction)PyTracer_trace,
      METH_VARARGS | METH_KEYWORDS, nullptr},
     {nullptr, nullptr, METH_NOARGS, nullptr}};
-static void Tracer_dealloc(PyTracer *self) {
+static void PyTracer_dealloc(PyTracer *self) {
+  self->tracer.~Tracer();
   Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 PyTypeObject PyTracerType = {
     PyVarObject_HEAD_INIT(nullptr, 0) "_C.Tracer", /* tp_name */
     sizeof(PyTracer),                              /* tp_basicsize */
     0,                                             /* tp_itemsize */
-    (destructor)Tracer_dealloc,                    /* tp_dealloc */
+    (destructor)PyTracer_dealloc,                  /* tp_dealloc */
     nullptr,                                       /* tp_print */
     nullptr,                                       /* tp_getattr */
     nullptr,                                       /* tp_setattr */
@@ -363,6 +364,7 @@ void BindPythonCModule(py::module *m_ptr) {
   VLOG(3) << "BindPythonCModule";
   auto &m = *m_ptr;
   PyObject *pythonc_module = initPythonCModule();
+  Py_INCREF(pythonc_module);
   PyModule_AddObject(m.ptr(), (const char *)"_C", pythonc_module);
 }
 
@@ -436,6 +438,20 @@ void BindImperative(py::module *m_ptr) {
                tensor->Resize(framework::make_ddim(dims));
              }
            })
+      .def("_run_backward",
+           [](imperative::VarBase &self,
+              const imperative::detail::BackwardStrategy &bckst,
+              const imperative::Tracer &tracer) {
+             // TODO(jiabin): when we impl more backward execution we can select
+             // them
+
+             imperative::Engine *engine = tracer.GetDefaultEngine();
+             VLOG(3) << "Start backward";
+             engine->Init(&self, bckst);
+             engine->Execute();
+             VLOG(3) << "Finish backward";
+           },
+           py::call_guard<py::gil_scoped_release>())
       .def("_run_backward",
            [](imperative::VarBase &self,
               const imperative::detail::BackwardStrategy &bckst,
