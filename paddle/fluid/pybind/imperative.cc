@@ -227,11 +227,11 @@ struct PyTracer {
 static PyObject *PyTracer_new(PyTypeObject *type, PyObject *args,
                               PyObject *kwargs) {
   PyObject *obj = type->tp_alloc(type, 0);
-  if (obj) {
-    auto v = reinterpret_cast<PyTracer *>(obj);
-    new (&v->tracer) imperative::Tracer();
-  }
   return obj;
+}
+static int PyTracer_init(PyTracer *self, PyObject *args, PyObject *kwargs) {
+  new (&self->tracer) imperative::Tracer();
+  return 0;
 }
 PyObject *PyTracer_trace(PyTracer *self, PyObject *args, PyObject *kwargs) {
   const char *type = nullptr;
@@ -313,7 +313,7 @@ PyTypeObject PyTracerType = {
     nullptr,                                       /* tp_descr_get */
     nullptr,                                       /* tp_descr_set */
     0,                                             /* tp_dictoffset */
-    nullptr,                                       /* tp_init */
+    reinterpret_cast<initproc>(PyTracer_init),     /* tp_init */
     nullptr,                                       /* tp_alloc */
     PyTracer_new,                                  /* tp_new */
     nullptr,
