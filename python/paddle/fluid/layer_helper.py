@@ -151,13 +151,13 @@ class LayerHelper(LayerHelperBase):
             act['use_mkldnn'] = self.kwargs.get('use_mkldnn')
         act_type = act.pop('type')
 
-        tmp = self.create_variable_for_type_inference(dtype=input_var.dtype)
-        self.append_op(
+        # tmp = self.create_variable_for_type_inference(dtype=input_var.dtype)
+        tmp = self.append_op(
             type=act_type,
             inputs={"X": [input_var]},
-            outputs={"Out": [tmp]},
+            outputs={"Out": 1},
             attrs=act)
-        return tmp
+        return tmp['Out'][0]
 
     #TODO (jiabin): should we remove this since it has never be used
     def _get_default_initializer(self, dtype):

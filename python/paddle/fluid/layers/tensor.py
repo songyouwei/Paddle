@@ -202,13 +202,13 @@ def concat(input, axis=0, name=None):
             out = fluid.layers.concat(input=[a, b, c, d], axis=2)
     """
     helper = LayerHelper('concat', **locals())
-    out = helper.create_variable_for_type_inference(dtype=helper.input_dtype())
-    helper.append_op(
+    # out = helper.create_variable_for_type_inference(dtype=helper.input_dtype())
+    out = helper.append_op(
         type='concat',
         inputs={'X': input},
-        outputs={'Out': [out]},
+        outputs={'Out': 1},
         attrs={'axis': axis})
-    return out
+    return out['Out'][0]
 
 
 def tensor_array_to_tensor(input, axis=1, name=None):

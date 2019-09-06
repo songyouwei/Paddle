@@ -107,19 +107,19 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
   }
 
   const char *kIVarField = "_ivar";
-  PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
+  //  PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
   std::vector<std::shared_ptr<imperative::VarBase>> result;
 
-  if (py_ivar) {  // Variable
-    result.emplace_back(
-        PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
-    Py_DECREF(py_ivar);
-  } else if (PyList_Check(py_obj)) {  // List of Variable
+  if (PyList_Check(py_obj)) {  // List of Variable
     size_t len = PyList_GET_SIZE(py_obj);
     result.reserve(len);
     for (size_t i = 0; i < len; ++i) {
       PyObject *py_ivar =
           PyObject_GetAttrString(PyList_GET_ITEM(py_obj, i), kIVarField);
+      if (!py_ivar) {
+        VLOG(3) << "List of VarBase";
+        py_ivar = PyList_GET_ITEM(py_obj, i);  // is VarBase
+      }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
       result.emplace_back(
           PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
@@ -131,17 +131,35 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
     for (size_t i = 0; i < len; ++i) {
       PyObject *py_ivar =
           PyObject_GetAttrString(PyTuple_GET_ITEM(py_obj, i), kIVarField);
+      if (!py_ivar) {
+        VLOG(3) << "Tuple of VarBase";
+        py_ivar = PyTuple_GET_ITEM(py_obj, i);  // is VarBase
+      }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
       result.emplace_back(
           PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
       Py_DECREF(py_ivar);
     }
-  } else {
-    PADDLE_THROW(
-        "unsupported type %s, must be Variable, list[Variable] or "
-        "tuple[Variable]",
-        py::str(handle));
+  } else {  // Variable
+    PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
+    if (py_ivar) {  // Variable
+      VLOG(3) << "single Variable";
+      result.emplace_back(
+          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
+    } else {  // VarBase
+      py_ivar = py_obj;
+      VLOG(3) << "single VarBase";
+      result.emplace_back(
+          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
+    }
+    Py_DECREF(py_ivar);
   }
+  //  else {
+  //    PADDLE_THROW(
+  //        "unsupported type %s, must be Variable, list[Variable] or "
+  //        "tuple[Variable]",
+  //        py::str(handle));
+  //  }
 
   return result;
 }
@@ -233,6 +251,160 @@ static int PyTracer_init(PyTracer *self, PyObject *args, PyObject *kwargs) {
   new (&self->tracer) imperative::Tracer();
   return 0;
 }
+
+// args format:
+//  type, inputs_size, outputs_size, attrs_size,
+//  input_1_key, input_1_value, ...,
+//  output_1_key, output_1_num, ...,
+//  attr_1_key, attr_1_value, ...,
+//  place, stop_gradient
+PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
+  VLOG(3) << "PyTracer_trace_tuple_return_out";
+  Py_ssize_t args_size = PyTuple_GET_SIZE(args);
+  Py_ssize_t idx = 0;
+  std::string type = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t inputs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t outputs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t attrs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  PADDLE_ENFORCE_EQ(args_size,
+                    6 + (inputs_size + outputs_size + attrs_size) * 2);
+
+  VLOG(3) << "type:" << type;
+  VLOG(3) << "inputs_size:" << inputs_size;
+  VLOG(3) << "outputs_size:" << outputs_size;
+  VLOG(3) << "attrs_size:" << attrs_size;
+
+  imperative::NameVarBaseMap inputs, outputs;
+  framework::AttributeMap attrs;
+  auto py_outs = PyDict_New();
+
+  for (Py_ssize_t i = 0; i < inputs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    auto value =
+        GetVarBaseListFromPyHandle(py::handle(PyTuple_GET_ITEM(args, idx++)));
+
+    if (!value.empty()) {
+      inputs.emplace(key, std::move(value));
+    }
+  }
+  for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    Py_ssize_t num = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+    std::vector<std::shared_ptr<imperative::VarBase>> value;
+    value.reserve(num);
+    auto py_value = PyList_New(num);
+    VLOG(3) << "num of new outs: " << num;
+    for (Py_ssize_t j = 0; j < num; ++j) {
+      auto var_name = key + ".tmp." + std::to_string(j);
+      VLOG(3) << "new out var: " << var_name;
+      std::shared_ptr<imperative::VarBase> var(
+          new imperative::VarBase(var_name));
+      auto *tensor = var->MutableVar()->GetMutable<framework::LoDTensor>();
+      tensor->Resize(framework::make_ddim({}));
+      value.emplace_back(var);
+      PyObject *py_var = py::cast(var).ptr();
+      Py_INCREF(py_var);
+      PyList_Append(py_value, py_var);
+    }
+    outputs.emplace(key, value);
+    PyDict_SetItemString(py_outs, key.c_str(), py_value);
+    Py_INCREF(py_value);
+  }
+  VLOG(3) << "outputs len: " << outputs.size();
+  for (Py_ssize_t i = 0; i < attrs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    auto value =
+        PyObjectCast<framework::Attribute>(PyTuple_GET_ITEM(args, idx++));
+    if (!value.empty()) {
+      attrs.emplace(key, std::move(value));
+    }
+  }
+
+  auto place = PyTuple_GET_ITEM(args, idx++);
+  auto stop_gradient = PyObject_IsTrue(PyTuple_GET_ITEM(args, idx));
+
+  auto place_class_name = Utils_unpackString(
+      GetPythonAttribute(GetPythonAttribute(place, "__class__"), "__name__"));
+  if (place_class_name == "CPUPlace") {
+    py::gil_scoped_release release;
+    self->tracer.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                         PyObjectCast<platform::CPUPlace>(place),
+                         stop_gradient);
+  } else {
+    py::gil_scoped_release release;
+    self->tracer.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                         PyObjectCast<platform::CUDAPlace>(place),
+                         stop_gradient);
+  }
+  VLOG(3) << "outputs len: " << outputs.size();
+
+  //  Py_INCREF(py_outs);
+  return py_outs;
+}
+
+// args format:
+//  type, input_size, output_size, attrs_size,
+//  input_1_key, input_1_value, ...,
+//  output_1_key, output_1_value, ...,
+//  attr_1_key, attr_1_value, ...,
+//  place, stop_gradient
+PyObject *PyTracer_trace_tuple(PyTracer *self, PyObject *args) {
+  Py_ssize_t args_size = PyTuple_GET_SIZE(args);
+  Py_ssize_t idx = 0;
+  std::string type = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t inputs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t outputs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  Py_ssize_t attrs_size = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+  PADDLE_ENFORCE_EQ(args_size,
+                    6 + (inputs_size + outputs_size + attrs_size) * 2);
+
+  imperative::NameVarBaseMap inputs, outputs;
+  framework::AttributeMap attrs;
+
+  for (Py_ssize_t i = 0; i < inputs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    auto value =
+        GetVarBaseListFromPyHandle(py::handle(PyTuple_GET_ITEM(args, idx++)));
+    if (!value.empty()) {
+      inputs.emplace(key, std::move(value));
+    }
+  }
+  for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    auto value =
+        GetVarBaseListFromPyHandle(py::handle(PyTuple_GET_ITEM(args, idx++)));
+    if (!value.empty()) {
+      outputs.emplace(key, std::move(value));
+    }
+  }
+  for (Py_ssize_t i = 0; i < attrs_size; ++i) {
+    std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+    auto value =
+        PyObjectCast<framework::Attribute>(PyTuple_GET_ITEM(args, idx++));
+    if (!value.empty()) {
+      attrs.emplace(key, std::move(value));
+    }
+  }
+
+  auto place = PyTuple_GET_ITEM(args, idx++);
+  auto stop_gradient = PyObject_IsTrue(PyTuple_GET_ITEM(args, idx));
+
+  auto place_class_name = Utils_unpackString(
+      GetPythonAttribute(GetPythonAttribute(place, "__class__"), "__name__"));
+  if (place_class_name == "CPUPlace") {
+    py::gil_scoped_release release;
+    self->tracer.TraceOp(
+        type, std::move(inputs), std::move(outputs), std::move(attrs),
+        PyObjectCast<platform::CPUPlace>(place), stop_gradient);
+  } else {
+    py::gil_scoped_release release;
+    self->tracer.TraceOp(
+        type, std::move(inputs), std::move(outputs), std::move(attrs),
+        PyObjectCast<platform::CUDAPlace>(place), stop_gradient);
+  }
+  Py_RETURN_NONE;
+}
+
 PyObject *PyTracer_trace(PyTracer *self, PyObject *args, PyObject *kwargs) {
   const char *type = nullptr;
   PyObject *inputs = nullptr;
@@ -273,6 +445,11 @@ PyObject *PyTracer_trace(PyTracer *self, PyObject *args, PyObject *kwargs) {
 static struct PyMethodDef PyTracer_methods[] = {
     {const_cast<char *>("trace"), (PyCFunction)PyTracer_trace,
      METH_VARARGS | METH_KEYWORDS, nullptr},
+    {const_cast<char *>("trace_tuple"), (PyCFunction)PyTracer_trace_tuple,
+     METH_VARARGS | METH_KEYWORDS, nullptr},
+    {const_cast<char *>("trace_tuple_return_out"),
+     (PyCFunction)PyTracer_trace_tuple_return_out, METH_VARARGS | METH_KEYWORDS,
+     nullptr},
     {nullptr, nullptr, METH_NOARGS, nullptr}};
 static void PyTracer_dealloc(PyTracer *self) {
   self->tracer.~Tracer();
@@ -538,6 +715,189 @@ void BindImperative(py::module *m_ptr) {
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward);
              }
+           })
+      //      .def("addone", [](imperative::Tracer &self, int a) {
+      //              return a+1;
+      //      })
+      //      .def("do_dict",[](imperative::Tracer &self, py::handle &vv0,
+      //      py::handle &vv1, py::handle &vv2) {
+      //              long result = 0;
+      //              for (auto vv : {vv0, vv1, vv2}) {
+      //
+      ////                for (long i = 0; i < PyList_Size(vv.ptr()); ++i) {
+      ////                  PyObject *py_vec = PyList_GET_ITEM(vv.ptr(), i);
+      ////                  for (long j = 0; j < PyList_Size(py_vec); ++j) {
+      ////                    PyLong_AsLong(PyList_GET_ITEM(py_vec, j));
+      ////                  }
+      ////                }
+      //                  result += PyLong_AsLong(
+      //                  PyList_GET_ITEM(PyList_GET_ITEM(vv.ptr(), 0), 0));
+      //              }
+      //              return result;
+      //      })
+      //      .def("trace_unpacked",
+      //              [](imperative::Tracer &self,
+      //                      const std::string &type,
+      //                      const imperative::VarBase &X,
+      //                      const imperative::VarBase &Y,
+      //                      const imperative::VarBase &Out,
+      //                      const int x_num_col_dims,
+      //                      const int y_num_col_dims,
+      //                      const platform::CPUPlace &place,
+      //                      bool trace_backward) {
+      //                  return 0;
+      //      })
+      .def("trace_tuple_return_out",
+           [](imperative::Tracer &self, py::handle _args) {
+             VLOG(3) << "trace_tuple_return_out";
+             PyObject *args = _args.ptr();
+             Py_ssize_t args_size = PyTuple_GET_SIZE(args);
+             Py_ssize_t idx = 0;
+             std::string type =
+                 Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t inputs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t outputs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t attrs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             PADDLE_ENFORCE_EQ(
+                 args_size, 6 + (inputs_size + outputs_size + attrs_size) * 2);
+
+             VLOG(3) << "type:" << type;
+             VLOG(3) << "inputs_size:" << inputs_size;
+             VLOG(3) << "outputs_size:" << outputs_size;
+             VLOG(3) << "attrs_size:" << attrs_size;
+
+             imperative::NameVarBaseMap inputs, outputs;
+             framework::AttributeMap attrs;
+
+             for (Py_ssize_t i = 0; i < inputs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               auto value = GetVarBaseListFromPyHandle(
+                   py::handle(PyTuple_GET_ITEM(args, idx++)));
+               if (!value.empty()) {
+                 inputs.emplace(key, std::move(value));
+               }
+             }
+             for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               Py_ssize_t num = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+               std::vector<std::shared_ptr<imperative::VarBase>> value;
+               value.reserve(num);
+               VLOG(3) << "num of new outs: " << num;
+               for (Py_ssize_t j = 0; j < num; ++j) {
+                 auto var_name = key + ".tmp." + std::to_string(j);
+                 VLOG(3) << "new out var: " << var_name;
+                 std::shared_ptr<imperative::VarBase> var(
+                     new imperative::VarBase(var_name));
+                 auto *tensor =
+                     var->MutableVar()->GetMutable<framework::LoDTensor>();
+                 tensor->Resize(framework::make_ddim({}));
+                 value.emplace_back(var);
+               }
+               outputs.emplace(key, value);
+             }
+             for (Py_ssize_t i = 0; i < attrs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               auto value = PyObjectCast<framework::Attribute>(
+                   PyTuple_GET_ITEM(args, idx++));
+               if (!value.empty()) {
+                 attrs.emplace(key, std::move(value));
+               }
+             }
+
+             auto place = PyTuple_GET_ITEM(args, idx++);
+             auto stop_gradient = PyObject_IsTrue(PyTuple_GET_ITEM(args, idx));
+
+             auto place_class_name = Utils_unpackString(GetPythonAttribute(
+                 GetPythonAttribute(place, "__class__"), "__name__"));
+             if (place_class_name == "CPUPlace") {
+               py::gil_scoped_release release;
+               self.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                            PyObjectCast<platform::CPUPlace>(place),
+                            stop_gradient);
+             } else {
+               py::gil_scoped_release release;
+               self.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                            PyObjectCast<platform::CUDAPlace>(place),
+                            stop_gradient);
+             }
+             VLOG(3) << "ready to return outs";
+             VLOG(3) << "size of outs: " << outputs.size();
+             //             for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+             //               PADDLE_ENFORCE_NOT_NULL(outputs["Out"][i].get());
+             //             }
+             return outputs;
+           })
+      .def("trace_tuple",
+           [](imperative::Tracer &self, py::handle _args) {
+             PyObject *args = _args.ptr();
+             Py_ssize_t args_size = PyTuple_GET_SIZE(args);
+             Py_ssize_t idx = 0;
+             std::string type =
+                 Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t inputs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t outputs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             Py_ssize_t attrs_size =
+                 PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
+             PADDLE_ENFORCE_EQ(
+                 args_size, 6 + (inputs_size + outputs_size + attrs_size) * 2);
+
+             imperative::NameVarBaseMap inputs, outputs;
+             framework::AttributeMap attrs;
+
+             for (Py_ssize_t i = 0; i < inputs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               auto value = GetVarBaseListFromPyHandle(
+                   py::handle(PyTuple_GET_ITEM(args, idx++)));
+               if (!value.empty()) {
+                 inputs.emplace(key, std::move(value));
+               }
+             }
+             for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               auto value = GetVarBaseListFromPyHandle(
+                   py::handle(PyTuple_GET_ITEM(args, idx++)));
+               if (!value.empty()) {
+                 outputs.emplace(key, std::move(value));
+               }
+             }
+             for (Py_ssize_t i = 0; i < attrs_size; ++i) {
+               std::string key =
+                   Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
+               auto value = PyObjectCast<framework::Attribute>(
+                   PyTuple_GET_ITEM(args, idx++));
+               if (!value.empty()) {
+                 attrs.emplace(key, std::move(value));
+               }
+             }
+
+             auto place = PyTuple_GET_ITEM(args, idx++);
+             auto stop_gradient = PyObject_IsTrue(PyTuple_GET_ITEM(args, idx));
+
+             auto place_class_name = Utils_unpackString(GetPythonAttribute(
+                 GetPythonAttribute(place, "__class__"), "__name__"));
+             if (place_class_name == "CPUPlace") {
+               py::gil_scoped_release release;
+               self.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                            PyObjectCast<platform::CPUPlace>(place),
+                            stop_gradient);
+             } else {
+               py::gil_scoped_release release;
+               self.TraceOp(type, std::move(inputs), outputs, std::move(attrs),
+                            PyObjectCast<platform::CUDAPlace>(place),
+                            stop_gradient);
+             }
+
+             return outputs;
            })
       .def("trace",
            [](imperative::Tracer &self, const std::string &type,

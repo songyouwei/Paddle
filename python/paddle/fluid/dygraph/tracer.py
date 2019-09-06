@@ -23,8 +23,8 @@ from paddle.fluid import framework
 __all__ = ['Tracer']
 
 
-# class Tracer(core.Tracer):
-class Tracer(core._C.Tracer):
+class Tracer(core.Tracer):
+    #class Tracer(core._C.Tracer):
     """
     Python wrapper of dygraph tracer
     """
