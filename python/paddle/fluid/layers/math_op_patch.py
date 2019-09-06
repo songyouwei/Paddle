@@ -14,7 +14,8 @@
 
 from __future__ import print_function
 
-from ..framework import Variable, unique_name
+from ..framework import Variable, unique_name, _main_program_
+from ..core import VarBase
 from .layer_function_generator import OpProtoHolder
 from ..initializer import force_init_on_cpu
 
@@ -54,14 +55,15 @@ def monkey_patch_variable():
         assert isinstance(ref_var, Variable)
         value = float(value)
         tmp_name = unique_tmp_name()
-        var = ref_var.block.create_var(name=tmp_name, dtype=dtype)
+        var = _main_program_.current_block().create_var(
+            name=tmp_name, dtype=dtype)
         batch_dim = -1
         for i, d in enumerate(ref_var.shape):
             if d < 0:
                 batch_dim = i
                 break
         assert batch_dim != -1
-        ref_var.block.append_op(
+        _main_program_.current_block().append_op(
             type='fill_constant_batch_size_like',
             outputs={'Out': [var]},
             inputs={'Input': [ref_var]},
@@ -88,8 +90,9 @@ def monkey_patch_variable():
             Variable with new dtype
         """
         tmp_name = unique_tmp_name()
-        out = self.block.create_var(name=tmp_name, dtype=dtype)
-        self.block.append_op(
+        out = _main_program_.current_block().create_var(
+            name=tmp_name, dtype=dtype)
+        _main_program_.current_block().append_op(
             type="cast",
             inputs={"X": [self]},
             outputs={"Out": [out]},
@@ -101,7 +104,8 @@ def monkey_patch_variable():
         def __impl__(self, other_var):
             lhs_dtype = safe_get_dtype(self)
 
-            if not isinstance(other_var, Variable):
+            if not isinstance(other_var, Variable) and not isinstance(other_var,
+                                                                      VarBase):
                 if reverse:
                     has_batch_size = False
                     for elem in self.shape:
@@ -110,7 +114,7 @@ def monkey_patch_variable():
                             break
                     if not has_batch_size:
                         other_var = create_tensor(
-                            self.block,
+                            _main_program_.current_block(),
                             other_var,
                             dtype=lhs_dtype,
                             shape=self.shape)
@@ -120,7 +124,9 @@ def monkey_patch_variable():
                 else:
                     # add fill_op to self.block
                     other_var = create_scalar(
-                        self.block, value=other_var, dtype=lhs_dtype)
+                        _main_program_.current_block(),
+                        value=other_var,
+                        dtype=lhs_dtype)
 
             rhs_dtype = safe_get_dtype(other_var)
             if lhs_dtype != rhs_dtype:
@@ -130,8 +136,8 @@ def monkey_patch_variable():
                 self = other_var
                 other_var = tmp
 
-            tmp_name = unique_tmp_name()
-            out = self.block.create_var(name=tmp_name, dtype=lhs_dtype)
+            # tmp_name = unique_tmp_name()
+            # out =  _main_program_.current_block().create_var(name=tmp_name, dtype=lhs_dtype)
 
             axis = -1
             if other_var.shape[0] == -1:
@@ -141,11 +147,11 @@ def monkey_patch_variable():
                 "be smaller than the rank of its second argument: %s vs %s" %
                 (len(self.shape), len(other_var.shape)))
 
-            self.block.append_op(
+            out = _main_program_.current_block().append_op(
                 type=op_type,
                 inputs={'X': [self],
                         'Y': [other_var]},
-                outputs={'Out': out},
+                outputs={'Out': 1},
                 attrs={'axis': axis})
             return out
 
@@ -189,6 +195,8 @@ def monkey_patch_variable():
         ("__gt__", "greater_than", False),
         ("__ge__", "greater_equal", False)):
         setattr(Variable, method_name,
+                _elemwise_method_creator_(method_name, op_type, reverse))
+        setattr(VarBase, method_name,
                 _elemwise_method_creator_(method_name, op_type, reverse))
 
     Variable.astype = astype

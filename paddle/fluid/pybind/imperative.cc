@@ -124,7 +124,7 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
       auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
       result.emplace_back(ivar);
       VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
-      Py_DECREF(py_ivar);
+      //      Py_DECREF(py_ivar);
     }
   } else if (PyTuple_Check(py_obj)) {  // Tuple of Variable
     size_t len = PyTuple_GET_SIZE(py_obj);
@@ -140,11 +140,11 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
       auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
       result.emplace_back(ivar);
       VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
-      Py_DECREF(py_ivar);
+      //      Py_DECREF(py_ivar);
     }
   } else {  // Variable
     PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
-    if (!py_ivar) {
+    if (!py_ivar) {  // is VarBase
       py_ivar = py_obj;
       VLOG(3) << "single VarBase";
     } else {
@@ -153,7 +153,7 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
     auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
     result.emplace_back(ivar);
     VLOG(3) << "input VarBase: " << ivar->Name();
-    Py_DECREF(py_ivar);
+    //    Py_DECREF(py_ivar);
   }
   //  else {
   //    PADDLE_THROW(

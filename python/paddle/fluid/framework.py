@@ -1789,15 +1789,15 @@ class Block(object):
             type = kwargs.get('type')
 
             if type not in ('sgd', 'split', 'softmax_with_cross_entropy'):
-                inputs_size = len(kwargs.get('inputs'))
-                outputs_size = len(kwargs.get('outputs'))
-                attrs_size = len(kwargs.get('attrs'))
+                inputs_size = len(kwargs.get('inputs', {}))
+                outputs_size = len(kwargs.get('outputs', {}))
+                attrs_size = len(kwargs.get('attrs', {}))
                 # for k in kwargs.get('inputs').keys():  # test input _ivar directly
                 #     if hasattr(kwargs.get('inputs')[k], '_ivar'):
                 #         kwargs.get('inputs')[k] = kwargs.get('inputs')[k]._ivar
-                inputs = sum(kwargs.get('inputs').items(), ())
-                outputs = sum(kwargs.get('outputs').items(), ())
-                attrs = sum(kwargs.get('attrs').items(), ())
+                inputs = sum(kwargs.get('inputs', {}).items(), ())
+                outputs = sum(kwargs.get('outputs', {}).items(), ())
+                attrs = sum(kwargs.get('attrs', {}).items(), ())
                 stop_gradient = kwargs.get('stop_gradient', False)
                 args = type, inputs_size, outputs_size, attrs_size, \
                        *inputs, *outputs, *attrs, \

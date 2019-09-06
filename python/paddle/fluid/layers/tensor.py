@@ -208,7 +208,7 @@ def concat(input, axis=0, name=None):
         inputs={'X': input},
         outputs={'Out': 1},
         attrs={'axis': axis})
-    return out['Out'][0]
+    return out
 
 
 def tensor_array_to_tensor(input, axis=1, name=None):
