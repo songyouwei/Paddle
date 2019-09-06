@@ -1248,7 +1248,7 @@ class Embedding(layers.Layer):
 
     def forward(self, input):
         # out = self._helper.create_variable_for_type_inference(self._dtype)
-        outs = self._helper.append_op(
+        out = self._helper.append_op(
             type='lookup_table',
             inputs={'Ids': input,
                     'W': self._w},
@@ -1260,7 +1260,7 @@ class Embedding(layers.Layer):
                 'padding_idx': self._padding_idx
             })
 
-        return outs['Out'][0]
+        return out
 
 
 class LayerNorm(layers.Layer):

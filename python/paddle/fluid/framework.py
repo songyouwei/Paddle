@@ -1788,7 +1788,7 @@ class Block(object):
             ##### new tracer begin #####
             type = kwargs.get('type')
 
-            if type not in ('sgd'):
+            if type not in ('sgd', 'split', 'softmax_with_cross_entropy'):
                 inputs_size = len(kwargs.get('inputs'))
                 outputs_size = len(kwargs.get('outputs'))
                 attrs_size = len(kwargs.get('attrs'))

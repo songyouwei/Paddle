@@ -121,8 +121,9 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
         py_ivar = PyList_GET_ITEM(py_obj, i);  // is VarBase
       }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
-      result.emplace_back(
-          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
+      auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
+      result.emplace_back(ivar);
+      VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
       Py_DECREF(py_ivar);
     }
   } else if (PyTuple_Check(py_obj)) {  // Tuple of Variable
@@ -136,22 +137,22 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
         py_ivar = PyTuple_GET_ITEM(py_obj, i);  // is VarBase
       }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
-      result.emplace_back(
-          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
+      auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
+      result.emplace_back(ivar);
+      VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
       Py_DECREF(py_ivar);
     }
   } else {  // Variable
     PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
-    if (py_ivar) {  // Variable
-      VLOG(3) << "single Variable";
-      result.emplace_back(
-          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
-    } else {  // VarBase
+    if (!py_ivar) {
       py_ivar = py_obj;
       VLOG(3) << "single VarBase";
-      result.emplace_back(
-          PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar));
+    } else {
+      VLOG(3) << "single Variable";
     }
+    auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
+    result.emplace_back(ivar);
+    VLOG(3) << "input VarBase: " << ivar->Name();
     Py_DECREF(py_ivar);
   }
   //  else {
@@ -276,7 +277,7 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
 
   imperative::NameVarBaseMap inputs, outputs;
   framework::AttributeMap attrs;
-  auto py_outs = PyDict_New();
+  //  auto py_outs = PyDict_New();
 
   for (Py_ssize_t i = 0; i < inputs_size; ++i) {
     std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
@@ -292,7 +293,7 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
     Py_ssize_t num = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
     std::vector<std::shared_ptr<imperative::VarBase>> value;
     value.reserve(num);
-    auto py_value = PyList_New(num);
+    //    auto py_value = PyList_New(num);
     VLOG(3) << "num of new outs: " << num;
     for (Py_ssize_t j = 0; j < num; ++j) {
       auto var_name = key + ".tmp." + std::to_string(j);
@@ -302,13 +303,13 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
       auto *tensor = var->MutableVar()->GetMutable<framework::LoDTensor>();
       tensor->Resize(framework::make_ddim({}));
       value.emplace_back(var);
-      PyObject *py_var = py::cast(var).ptr();
-      Py_INCREF(py_var);
-      PyList_Append(py_value, py_var);
+      //      PyObject *py_var = py::cast(var).ptr();
+      //      Py_INCREF(py_var);
+      //      PyList_Append(py_value, py_var);
     }
     outputs.emplace(key, value);
-    PyDict_SetItemString(py_outs, key.c_str(), py_value);
-    Py_INCREF(py_value);
+    //    Py_INCREF(py_value);
+    //    PyDict_SetItemString(py_outs, key.c_str(), py_value);
   }
   VLOG(3) << "outputs len: " << outputs.size();
   for (Py_ssize_t i = 0; i < attrs_size; ++i) {
@@ -339,7 +340,8 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
   VLOG(3) << "outputs len: " << outputs.size();
 
   //  Py_INCREF(py_outs);
-  return py_outs;
+  //  return py_outs;
+  return py::cast(outputs["Out"][0]).ptr();
 }
 
 // args format:
@@ -789,7 +791,7 @@ void BindImperative(py::module *m_ptr) {
                value.reserve(num);
                VLOG(3) << "num of new outs: " << num;
                for (Py_ssize_t j = 0; j < num; ++j) {
-                 auto var_name = key + ".tmp." + std::to_string(j);
+                 auto var_name = type + "." + key + std::to_string(j);
                  VLOG(3) << "new out var: " << var_name;
                  std::shared_ptr<imperative::VarBase> var(
                      new imperative::VarBase(var_name));
@@ -831,7 +833,7 @@ void BindImperative(py::module *m_ptr) {
              //             for (Py_ssize_t i = 0; i < outputs_size; ++i) {
              //               PADDLE_ENFORCE_NOT_NULL(outputs["Out"][i].get());
              //             }
-             return outputs;
+             return outputs["Out"][0];
            })
       .def("trace_tuple",
            [](imperative::Tracer &self, py::handle _args) {

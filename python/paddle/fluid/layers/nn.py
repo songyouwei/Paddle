@@ -1661,7 +1661,7 @@ def dropout(x,
     if (seed is None or seed == 0) and helper.main_program.random_seed != 0:
         seed = helper.main_program.random_seed
 
-    outs = helper.append_op(
+    out = helper.append_op(
         type='dropout',
         inputs={'X': [x]},
         outputs={'Out': 1,
@@ -1673,7 +1673,7 @@ def dropout(x,
             'seed': seed if seed is not None else 0,
             'dropout_implementation': dropout_implementation,
         })
-    return outs['Out'][0]
+    return out
 
 
 def cross_entropy(input, label, soft_label=False, ignore_index=kIgnoreIndex):
@@ -4940,7 +4940,7 @@ def reduce_sum(input, dim=None, keep_dim=False, name=None):
             'keep_dim': keep_dim,
             'reduce_all': True if dim == None else False
         })
-    return out['Out'][0]
+    return out
 
 
 def reduce_mean(input, dim=None, keep_dim=False, name=None):
@@ -4999,7 +4999,7 @@ def reduce_mean(input, dim=None, keep_dim=False, name=None):
             'keep_dim': keep_dim,
             'reduce_all': True if dim == None else False
         })
-    return out['Out'][0]
+    return out
 
 
 def reduce_max(input, dim=None, keep_dim=False, name=None):
@@ -5337,21 +5337,21 @@ def split(input, num_or_sections, dim=-1, name=None):
         assert len(num_or_sections) <= input_shape[
             dim], 'len(num_or_sections) must not be more than input.shape[dim].'
         num = len(num_or_sections)
-    # outs = [
-    #     helper.create_variable_for_type_inference(dtype=helper.input_dtype())
-    #     for i in range(num)
-    # ]
-    outs = helper.append_op(
+    outs = [
+        helper.create_variable_for_type_inference(dtype=helper.input_dtype())
+        for i in range(num)
+    ]
+    helper.append_op(
         type='split',
         inputs={'X': input},
-        outputs={'Out': num},
+        outputs={'Out': outs},
         attrs={
             'num': num_or_sections if isinstance(num_or_sections, int) else 0,
             'sections': num_or_sections
             if isinstance(num_or_sections, list) else [],
             'axis': dim
         })
-    return outs['Out']
+    return outs
 
 
 def l2_normalize(x, axis, epsilon=1e-12, name=None):
@@ -5522,7 +5522,7 @@ def matmul(x, y, transpose_x=False, transpose_y=False, alpha=1.0, name=None):
             'transpose_Y': transpose_y,
             'alpha': float(alpha),
         })
-    return out['Out'][0]
+    return out
 
 
 def topk(input, k, name=None):
@@ -6363,13 +6363,13 @@ def transpose(x, perm, name=None):
     helper = LayerHelper('transpose', **locals())
     # out = helper.create_variable_for_type_inference(x.dtype)
     # x_shape = helper.create_variable_for_type_inference(x.dtype)
-    outs = helper.append_op(
+    out = helper.append_op(
         type='transpose2',
         inputs={'X': [x]},
         outputs={'Out': 1,
                  'XShape': 1},
         attrs={'axis': perm})
-    return outs['Out'][0]
+    return out
 
 
 def im2sequence(input,
@@ -6724,14 +6724,14 @@ def softmax_with_cross_entropy(logits,
                 logits=fc, label=label)
     """
     helper = LayerHelper('softmax_with_cross_entropy', **locals())
-    # softmax = helper.create_variable_for_type_inference(dtype=logits.dtype)
-    # loss = helper.create_variable_for_type_inference(dtype=logits.dtype)
-    outs = helper.append_op(
+    softmax = helper.create_variable_for_type_inference(dtype=logits.dtype)
+    loss = helper.create_variable_for_type_inference(dtype=logits.dtype)
+    helper.append_op(
         type='softmax_with_cross_entropy',
         inputs={'Logits': logits,
                 'Label': label},
-        outputs={'Softmax': 1,
-                 'Loss': 1},
+        outputs={'Softmax': softmax,
+                 'Loss': loss},
         attrs={
             'soft_label': soft_label,
             'ignore_index': ignore_index,
@@ -6740,9 +6740,9 @@ def softmax_with_cross_entropy(logits,
         })
 
     if return_softmax:
-        return outs['Loss'][0], outs['Softmax'][0]
+        return loss, softmax
 
-    return outs['Loss'][0]
+    return loss
 
 
 def sampled_softmax_with_cross_entropy(logits,
@@ -7150,14 +7150,14 @@ def reshape(x, shape, actual_shape=None, act=None, inplace=False, name=None):
     # out = x if inplace else helper.create_variable_for_type_inference(
     #     dtype=x.dtype)
     # x_shape = helper.create_variable_for_type_inference(dtype=x.dtype)
-    outs = helper.append_op(
+    out = helper.append_op(
         type="reshape2",
         inputs=inputs,
         attrs=attrs,
         outputs={"Out": 1,
                  "XShape": 1})
 
-    return helper.append_activation(outs['Out'][0])
+    return helper.append_activation(out)
 
 
 def squeeze(input, axes, name=None):
@@ -10641,7 +10641,7 @@ def slice(input, axes, starts, ends):
                'starts': starts,
                'ends': ends})
 
-    return out['Out'][0]
+    return out
 
 
 def shape(input):
@@ -10756,7 +10756,7 @@ def _elementwise_op(helper):
         outputs={'Out': 1},
         attrs={'axis': axis,
                'use_mkldnn': use_mkldnn})
-    return helper.append_activation(out['Out'][0])
+    return helper.append_activation(out)
 
 
 @templatedoc()

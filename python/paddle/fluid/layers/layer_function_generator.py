@@ -246,7 +246,7 @@ def generate_activation_fn(op_type):
         # output = helper.create_variable_for_type_inference(dtype=x.dtype)
         output = helper.append_op(
             type=op_type, inputs={"X": x}, outputs={"Out": 1})
-        return output['Out'][0]
+        return output
 
     func.__name__ = op_type
     func.__doc__ = _generate_doc_string_(op_proto)

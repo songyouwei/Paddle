@@ -157,7 +157,7 @@ class LayerHelper(LayerHelperBase):
             inputs={"X": [input_var]},
             outputs={"Out": 1},
             attrs=act)
-        return tmp['Out'][0]
+        return tmp
 
     #TODO (jiabin): should we remove this since it has never be used
     def _get_default_initializer(self, dtype):
