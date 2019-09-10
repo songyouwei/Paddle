@@ -114,17 +114,18 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
     size_t len = PyList_GET_SIZE(py_obj);
     result.reserve(len);
     for (size_t i = 0; i < len; ++i) {
-      PyObject *py_ivar =
-          PyObject_GetAttrString(PyList_GET_ITEM(py_obj, i), kIVarField);
+      PyObject *py_ivar = PyObject_GetAttrString(PyList_GET_ITEM(py_obj, i),
+                                                 kIVarField);  // will incref
       if (!py_ivar) {
         VLOG(3) << "List of VarBase";
         py_ivar = PyList_GET_ITEM(py_obj, i);  // is VarBase
+        Py_INCREF(py_ivar);                    // new ref instead
       }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
       auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
       result.emplace_back(ivar);
       VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
-      //      Py_DECREF(py_ivar);
+      Py_DECREF(py_ivar);
     }
   } else if (PyTuple_Check(py_obj)) {  // Tuple of Variable
     size_t len = PyTuple_GET_SIZE(py_obj);
@@ -135,17 +136,19 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
       if (!py_ivar) {
         VLOG(3) << "Tuple of VarBase";
         py_ivar = PyTuple_GET_ITEM(py_obj, i);  // is VarBase
+        Py_INCREF(py_ivar);                     // new ref instead
       }
       PADDLE_ENFORCE_NOT_NULL(py_ivar);
       auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
       result.emplace_back(ivar);
       VLOG(3) << "input " << i << "th VarBase: " << ivar->Name();
-      //      Py_DECREF(py_ivar);
+      Py_DECREF(py_ivar);
     }
   } else {  // Variable
     PyObject *py_ivar = GetPythonAttribute(py_obj, kIVarField);
     if (!py_ivar) {  // is VarBase
       py_ivar = py_obj;
+      Py_INCREF(py_ivar);  // new ref instead
       VLOG(3) << "single VarBase";
     } else {
       VLOG(3) << "single Variable";
@@ -153,7 +156,7 @@ GetVarBaseListFromPyHandle(const py::handle &handle) {
     auto ivar = PyObjectCast<std::shared_ptr<imperative::VarBase>>(py_ivar);
     result.emplace_back(ivar);
     VLOG(3) << "input VarBase: " << ivar->Name();
-    //    Py_DECREF(py_ivar);
+    Py_DECREF(py_ivar);
   }
   //  else {
   //    PADDLE_THROW(

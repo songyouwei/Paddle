@@ -60,10 +60,10 @@ class VarBase {
   explicit VarBase(bool has_grad, const std::string& name)
       : name_(name),
         grad_var_(has_grad ? new VarBase(false, GradVarName()) : nullptr) {
-    //    if (IsDebugEnabled()) {
-    VLOG(3) << "Construct VarBase: " << name;
-    //      name_set_.Insert(name_);
-    //    }
+    if (IsDebugEnabled()) {
+      VLOG(3) << "Construct VarBase: " << name;
+      name_set_.Insert(name_);
+    }
   }
 
   explicit VarBase(const std::string& name) : VarBase(true, name) {}
