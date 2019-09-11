@@ -1799,15 +1799,10 @@ class Block(object):
                 outputs = sum(kwargs.get('outputs', {}).items(), ())
                 attrs = sum(kwargs.get('attrs', {}).items(), ())
                 stop_gradient = kwargs.get('stop_gradient', False)
-                args = type, inputs_size, outputs_size, attrs_size, \
-                       *inputs, *outputs, *attrs, \
-                       _current_expected_place(), stop_gradient
 
-                if (_dygraph_tracer().__class__.__base__.__module__ == '_C'):
-                    outs = _dygraph_tracer().trace_tuple_return_out(*args)
-                else:
-                    outs = _dygraph_tracer().trace_tuple_return_out(args)
-
+                outs = _dygraph_tracer().trace_tuple_return_out(
+                    type, inputs_size, outputs_size, attrs_size, *inputs,
+                    *outputs, *attrs, _current_expected_place(), stop_gradient)
                 return outs
 
             ##### new tracer end #####
