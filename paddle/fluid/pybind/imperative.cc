@@ -280,13 +280,11 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
 
   imperative::NameVarBaseMap inputs, outputs;
   framework::AttributeMap attrs;
-  //  auto py_outs = PyDict_New();
 
   for (Py_ssize_t i = 0; i < inputs_size; ++i) {
     std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
     auto value =
         GetVarBaseListFromPyHandle(py::handle(PyTuple_GET_ITEM(args, idx++)));
-
     if (!value.empty()) {
       inputs.emplace(key, std::move(value));
     }
@@ -296,25 +294,18 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
     Py_ssize_t num = PyLong_AsSsize_t(PyTuple_GET_ITEM(args, idx++));
     std::vector<std::shared_ptr<imperative::VarBase>> value;
     value.reserve(num);
-    //    auto py_value = PyList_New(num);
     VLOG(3) << "num of new outs: " << num;
     for (Py_ssize_t j = 0; j < num; ++j) {
-      auto var_name = key + ".tmp." + std::to_string(j);
+      auto var_name = type + "." + key + std::to_string(j);
       VLOG(3) << "new out var: " << var_name;
       std::shared_ptr<imperative::VarBase> var(
           new imperative::VarBase(var_name));
       auto *tensor = var->MutableVar()->GetMutable<framework::LoDTensor>();
       tensor->Resize(framework::make_ddim({}));
       value.emplace_back(var);
-      //      PyObject *py_var = py::cast(var).ptr();
-      //      Py_INCREF(py_var);
-      //      PyList_Append(py_value, py_var);
     }
     outputs.emplace(key, value);
-    //    Py_INCREF(py_value);
-    //    PyDict_SetItemString(py_outs, key.c_str(), py_value);
   }
-  VLOG(3) << "outputs len: " << outputs.size();
   for (Py_ssize_t i = 0; i < attrs_size; ++i) {
     std::string key = Utils_unpackString(PyTuple_GET_ITEM(args, idx++));
     auto value =
@@ -340,11 +331,16 @@ PyObject *PyTracer_trace_tuple_return_out(PyTracer *self, PyObject *args) {
                          PyObjectCast<platform::CUDAPlace>(place),
                          stop_gradient);
   }
-  VLOG(3) << "outputs len: " << outputs.size();
-
-  //  Py_INCREF(py_outs);
-  //  return py_outs;
-  return py::cast(outputs["Out"][0]).ptr();
+  VLOG(3) << "ready to return outs";
+  VLOG(3) << "size of outs: " << outputs.size();
+  //             for (Py_ssize_t i = 0; i < outputs_size; ++i) {
+  //               PADDLE_ENFORCE_NOT_NULL(outputs["Out"][i].get());
+  //             }
+  py::object outobj =
+      py::cast(outputs["Out"][0], py::return_value_policy::automatic);
+  py::handle out = outobj.release();  // release is required
+  VLOG(3) << "out refcnt: " << out.ref_count();
+  return out.ptr();
 }
 
 // args format:
