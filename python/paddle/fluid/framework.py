@@ -584,7 +584,7 @@ class Variable(object):
         .. code-block:: python
 
             import paddle.fluid as fluid
-            cur_program = fluid.Program()
+            cur_program = Program()
             cur_block = cur_program.current_block()
             new_variable = cur_block.create_var(name="X",
                                                 shape=[-1, 23, 48],
@@ -615,10 +615,12 @@ class Variable(object):
                  is_data=False,
                  need_check_feed=False,
                  belong_to_optimizer=False,
+                 lazy_create_ivar=False,
                  **kwargs):
         self.block = block
         if name is None:
             name = unique_name.generate('_generated_var')
+        self._name = name
 
         if dtype is not None:
             if not isinstance(dtype, core.VarDesc.VarType):
@@ -630,7 +632,7 @@ class Variable(object):
             # record vars in tracer rather than blocks
             self._ivar = kwargs.get("ivar", None)
             self.stop_gradient_ = kwargs.get("stop_gradient", True)
-            if not self._ivar:
+            if not self._ivar and not lazy_create_ivar:
                 self._ivar = core.VarBase(
                     name, type
                     if type else core.VarDesc.VarType.LOD_TENSOR, dtype
@@ -1027,6 +1029,18 @@ class Variable(object):
         return res_str
 
     __repr__ = __str__
+
+    def set_desc(self, input):
+        """
+        Set the variable description.
+
+        Args:
+            input(core.VarDesc): The new VarDesc.
+
+        Returns:
+            None
+        """
+        self.desc = input
 
     @property
     def stop_gradient(self):
@@ -1660,7 +1674,7 @@ class Operator(object):
         .. code-block:: python
 
             import paddle.fluid as fluid
-            cur_program = fluid.Program()
+            cur_program = Program()
             cur_block = cur_program.current_block()
             # var1 += var2 + var3
             cur_block.append_op(type="sum",
@@ -2386,7 +2400,13 @@ class Block(object):
             Operator: the append Operator.
         """
         if in_dygraph_mode():
-            attrs = kwargs.get("attrs", {})
+
+            type = kwargs.get('type', None)
+            inputs = kwargs.get('inputs', {})
+            outputs = kwargs.get('outputs', {})
+            attrs = kwargs.get('attrs', {})
+            stop_gradient = kwargs.get('stop_gradient', False)
+
             if _dygraph_tracer_._train_mode == False:
                 # eval mode
                 if ('trainable_statistics' not in attrs
@@ -2394,8 +2414,6 @@ class Block(object):
                     attrs['is_test'] = True
                 else:
                     attrs['is_test'] = False
-
-            type = kwargs.get("type", None)
 
             op = Operator(
                 block=self,
@@ -2409,12 +2427,9 @@ class Block(object):
             #
             # TODO(minqiyang): add op stop_gradient support in static mode too.
             # currently, we only support stop_gradient in dygraph mode.
+            _dygraph_tracer().trace_op_tuple(type, inputs, outputs, attrs,
+                                             stop_gradient)
 
-            _dygraph_tracer().trace_op(type,
-                                       kwargs.get("inputs", {}),
-                                       kwargs.get("outputs", {}), attrs
-                                       if attrs else {},
-                                       kwargs.get("stop_gradient", False))
         else:
             op_desc = self.desc.append_op()
             op = Operator(
@@ -3876,13 +3891,9 @@ class Program(object):
         """
         if for_test:
             if self._appending_grad_times > 0:
-                forward_prog = Program()
-                forward_prog.desc = core.prune_backward(self.desc)
-                forward_prog.blocks = [
-                    Block(forward_prog, i)
-                    for i in six.moves.range(forward_prog.desc.num_blocks())
-                ]
-                forward_prog._sync_with_cpp()
+                loss_op = self._find_loss_op()
+                assert loss_op is not None, "The optimized network should have loss operator."
+                forward_prog = self._prune([], loss_op)
                 p = forward_prog._inference_optimize(prune_read_op=False)
             else:
                 p = self._inference_optimize(prune_read_op=False)
@@ -4401,6 +4412,16 @@ class Program(object):
         for each_block in self.blocks:
             for each_var in list(each_block.vars.values()):
                 yield each_var
+
+    def _find_loss_op(self):
+        loss_op = None
+        op_role_key = core.op_proto_and_checker_maker.kOpRoleAttrName()
+        forward_loss = int(core.op_proto_and_checker_maker.OpRole.Forward
+                           ) | int(core.op_proto_and_checker_maker.OpRole.Loss)
+        for op in self.global_block().ops:
+            if int(op.all_attrs()[op_role_key]) == forward_loss:
+                loss_op = op
+        return loss_op
 
 
 class Parameter(Variable):

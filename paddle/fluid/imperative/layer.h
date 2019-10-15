@@ -61,7 +61,7 @@ class VarBase {
       : name_(name),
         grad_var_(has_grad ? new VarBase(false, GradVarName()) : nullptr) {
     if (IsDebugEnabled()) {
-      VLOG(10) << "Construct VarBase: " << name;
+      VLOG(3) << "Construct VarBase: " << name;
       name_set_.Insert(name_);
     }
   }
@@ -69,7 +69,7 @@ class VarBase {
   explicit VarBase(const std::string& name) : VarBase(true, name) {}
 
   ~VarBase() {
-    VLOG(10) << "Destruct VarBase: " << name_;
+    VLOG(3) << "Destruct VarBase: " << name_;
     if (IsDebugEnabled()) {
       name_set_.Remove(name_);
     }

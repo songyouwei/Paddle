@@ -21,6 +21,7 @@ namespace paddle {
 namespace pybind {
 
 void BindImperative(pybind11::module* m);
+void BindPythonCModule(pybind11::module* m);
 
 }  // namespace pybind
 }  // namespace paddle

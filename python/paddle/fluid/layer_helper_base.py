@@ -346,7 +346,8 @@ class LayerHelperBase(object):
             dtype=dtype,
             type=core.VarDesc.VarType.LOD_TENSOR,
             persistable=False,
-            stop_gradient=stop_gradient)
+            stop_gradient=stop_gradient,
+            lazy_create_ivar=True)
 
     def create_variable(self, *args, **kwargs):
         """Create Variable for this layers.

@@ -23,7 +23,8 @@ from paddle.fluid import framework
 __all__ = ['Tracer']
 
 
-class Tracer(core.Tracer):
+# class Tracer(core.Tracer):
+class Tracer(core._C.Tracer):
     """
     Python wrapper of dygraph tracer
     """
@@ -45,6 +46,18 @@ class Tracer(core.Tracer):
         self.trace(type, inputs, outputs, attrs,
                    framework._current_expected_place(), self._train_mode and
                    not stop_gradient)
+
+    def trace_op_tuple(self, type, inputs, outputs, attrs, stop_gradient=False):
+        inputs_size = len(inputs)
+        outputs_size = len(outputs)
+        attrs_size = len(attrs)
+        inputs_arg = sum(inputs.items(), ())
+        outputs_arg = sum(outputs.items(), ())
+        attrs_arg = sum(attrs.items(), ())
+        self.trace_tuple(type, inputs_size, outputs_size, attrs_size,
+                         *inputs_arg, *outputs_arg, *attrs_arg,
+                         framework._current_expected_place(),
+                         self._train_mode and not stop_gradient)
 
     def train_mode(self):
         self._train_mode = True
